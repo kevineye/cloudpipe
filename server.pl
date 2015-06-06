@@ -9,6 +9,8 @@
 # TODO add other backends (e.g. pastebin, gist)
 # TODO add --edit option that uploads, waits for web edit, then re-downloads
 # TODO add expiration on files (deleted after ___ days)
+# TODO add tests
+# TODO support multiple writers
 
 BEGIN {
     $ENV{MOJO_INACTIVITY_TIMEOUT} = 0;
