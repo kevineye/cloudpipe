@@ -13,7 +13,6 @@
 BEGIN {
     $ENV{MOJO_INACTIVITY_TIMEOUT} = 0;
 }
-# try app->defaults(inactivity_timeout => 0)?
 
 use Mojolicious::Lite;
 use autodie;
