@@ -70,7 +70,8 @@ sub put_open {
     my ($path) = @_;
     app->log->debug("$path -> BEGIN RECEIVING");
     unlink "$cloud_storage_path$path" if -e "$cloud_storage_path$path";
-    $writing{$path} = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
+    my $file = $writing{$path} = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
+    open $file->{handle}, '>', $file->path; # hack to force read-write open and trunc
     $_->() for @{$reading{$path} || []};
     # TODO what if already open?
     # TODO implement append
@@ -93,12 +94,12 @@ sub put_close {
 sub get_send {
     my ($path, $controller) = @_;
 
-    my $file = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
     my $pos = 0;
     app->log->debug("$path -> BEGIN SENDING");
 
     my $cb;
     $cb = sub {
+        my $file = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
 
         # must have been truncated; return to beginning
         $pos = 0 if $pos > $file->size;
@@ -138,13 +139,13 @@ sub get_send {
 
     # call the callback to get things started
     # unless the file doesn't exist yet... we'll do nothing now and wait
+    my $file = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
     if ($file->size > 0) {
         $cb->();
     } else {
         app->log->debug("$path -> WAITING FOR INITIAL DATA");
     }
 
-    # TODO fix bad FD on waiting for start
     # TODO consider last=x param
 }
 
