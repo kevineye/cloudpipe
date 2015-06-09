@@ -1,17 +1,5 @@
 #!/usr/bin/perl
 
-# stream to this with cat | curl -fsS -T - -H Expect: http://localhost:3000/any/name
-# stream from this with curl -fsSN http://localhost:3000/any/name
-# slow-write with perl -e 'syswrite STDOUT, $_ and sleep 1 for 0..9'
-# slow-read with perl -e 'sleep 1 while sysread STDIN, $s, 1 and syswrite STDOUT, $s'
-
-# TODO add web site to list, edit, view/watch, add "copy curl", "install" options
-# TODO add other backends (e.g. pastebin, gist)
-# TODO add --edit option that uploads, waits for web edit, then re-downloads
-# TODO add expiration on files (deleted after ___ days)
-# TODO add tests
-# TODO support multiple writers
-
 BEGIN {
     $ENV{MOJO_INACTIVITY_TIMEOUT} = 0;
 }
@@ -19,6 +7,7 @@ BEGIN {
 use Mojolicious::Lite;
 use autodie;
 use File::Path 'make_path';
+use Mojo::JSON 'encode_json';
 use Scalar::Util 'weaken';
 
 app->log->level('debug');
@@ -28,6 +17,7 @@ my $cloud_storage_path = $ENV{CLOUD_STORAGE} || '/tmp/cloud';
 
 my %writing;
 my %reading;
+my @listening;
 
 hook after_build_tx => sub {
     my $tx = shift;
@@ -60,7 +50,57 @@ put '*' => sub {
     $c->render(data => '');
 };
 
-get '*' => sub {
+#get '/' => sub {
+#    my $c = shift;
+#    $c->render(text => "...");
+#};
+
+get '/_/api/list' => sub {
+    my $c = shift;
+    $c->render(json => generate_status_json());
+};
+
+get '/_/api/watch' => sub {
+    my $c = shift;
+    $c->res->headers->content_type('application/json');
+    push @listening, $c;
+    $c->write_chunk(encode_json generate_status_json());
+};
+
+sub send_status {
+    @listening = grep { $_->tx } @listening;
+    my $status = encode_json generate_status_json();
+    $_->write_chunk($status) for @listening;
+}
+
+sub generate_status_json {
+    my $data = { files => [] };
+    my @to_scan = $cloud_storage_path;
+    while (my $file = pop @to_scan) {
+        if (-d $file) {
+            my $dh;
+            opendir $dh, $file;
+            for (reverse readdir $dh) {
+                next if $_ eq '.' or $_ eq '..';
+                push @to_scan, "$file/$_";
+            }
+            closedir $dh;
+        } elsif (-f $file) {
+            my $path = substr $file, 1 + length $cloud_storage_path ;
+            my @stat = stat $file;
+            push @{$data->{files}}, {
+                name => $path,
+                sending => ($reading{$path} ? Mojo::JSON->true : Mojo::JSON->false),
+                receiving => ($writing{$path} ? Mojo::JSON->true : Mojo::JSON->false),
+                size => $stat[7],
+                mtime => $stat[9],
+            };
+        }
+    }
+    return $data;
+}
+
+get '/*' => sub {
     my $c = shift;
     get_send($c->req->url->path, $c);
     $c->render_later;
@@ -74,8 +114,7 @@ sub put_open {
     my $file = $writing{$path} = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
     open $file->{handle}, '>', $file->path; # hack to force read-write open and trunc
     $_->() for @{$reading{$path} || []};
-    # TODO what if already open?
-    # TODO implement append
+    send_status();
 }
 
 sub put_recv {
@@ -90,6 +129,7 @@ sub put_close {
     app->log->debug("$path -> FINISHED RECEIVING");
     delete $writing{$path};
     $_->() for @{$reading{$path} || []};
+    send_status();
 }
 
 sub get_send {
@@ -147,7 +187,7 @@ sub get_send {
         app->log->debug("$path -> WAITING FOR INITIAL DATA");
     }
 
-    # TODO consider last=x param
+    send_status();
 }
 
 sub get_close {
@@ -155,6 +195,7 @@ sub get_close {
     app->log->debug("$path -> CLOSING");
     $reading{$path} = [ grep { $_ ne $cb } @{$reading{$path}} ];
     delete $reading{$path} if @{$reading{$path}} == 0;
+    send_status();
 }
 
 app->start;
