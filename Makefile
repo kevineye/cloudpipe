@@ -5,7 +5,7 @@ CONTAINERNAME = $(NAME)
 IMAGETAG      = $(NAMESPACE)/$(NAME)
 
 OPTS          = --name $(CONTAINERNAME) \
-                -p 8080:80
+                -p 9729:80
 
 SHELLOPTS     = $(OPTS) \
                 -v "$(CURDIR)":/app                
