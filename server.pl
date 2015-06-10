@@ -57,14 +57,15 @@ put '*' => sub {
 
 get '/_/api/list' => sub {
     my $c = shift;
-    $c->render(json => generate_status_json());
-};
-
-get '/_/api/watch' => sub {
-    my $c = shift;
-    $c->res->headers->content_type('application/json');
-    push @listening, $c;
-    $c->write_chunk(encode_json generate_status_json());
+    if ($c->req->headers->te && $c->req->headers->te =~ /\bchunked\b/) {
+        # client wants streaming updates
+        $c->res->headers->content_type('application/json');
+        push @listening, $c;
+        $c->write_chunk(encode_json generate_status_json());
+    } else {
+        # client did not ask for streaming updates
+        $c->render(json => generate_status_json());
+    }
 };
 
 sub send_status {
@@ -102,9 +103,14 @@ sub generate_status_json {
 
 get '/*' => sub {
     my $c = shift;
-    get_send($c->req->url->path, $c);
-    $c->render_later;
-    #$c->render(data => $cache{$c->param('id')});
+    if ($c->req->headers->te && $c->req->headers->te =~ /\bchunked\b/) {
+        # client wants streaming updates
+        get_send($c->req->url->path, $c);
+        $c->render_later;
+    } else {
+        # client did not ask for streaming updates
+        $c->reply->asset(Mojo::Asset::File->new(path => $cloud_storage_path . $c->req->url->path));
+    }
 };
 
 sub put_open {
