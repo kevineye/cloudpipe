@@ -17,7 +17,7 @@
     curl -fsSN -H TE:chunked http://localhost:9729/anyname
 
     # like a real command
-    cloud() { test -t 0 && curl -fsSN -H TE:chunked http://docker.dev:9729/${1-default} || curl -fsS -T - -H Expect: http://docker.dev:9729/${1-default}; }
+    cloud() { test -t 0 && curl -fsSN -H TE:chunked http://localhost:9729/${1-default} || curl -fsS -T - -H Expect: http://localhost:9729/${1-default}; }
 
 
 ### Features
@@ -30,4 +30,8 @@
 
 ### REST API
 
-- `/_/api/list` return JSON describing all streams available to read. With `TE: chunked` header, the connection will be held open, sending new JSON messages for each status change.
+ - `PUT /*` upload a file
+ - `GET /*` download a file
+ - `DELETE /*` delete a file
+ - `GET /_/api/list` return JSON describing all streams available to read. With `TE: chunked` header, the connection will be held open, sending new JSON messages for each status change.
+ - `POST /_/api/cleanup` trigger file and directory cleanup (also runs every 10 minutes)

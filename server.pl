@@ -15,6 +15,8 @@ app->log->level('debug');
 my $cloud_storage_path = $ENV{CLOUD_STORAGE} || '/tmp/cloud';
 -d $cloud_storage_path or make_path $cloud_storage_path or die "cannot create $cloud_storage_path; override with CLOUD_STORAGE environment variable\n";
 
+my $expiration_seconds = ($ENV{EXPIRATION_DAYS} || 7) * 86400;
+
 my %writing;
 my %reading;
 my @listening;
@@ -68,6 +70,12 @@ get '/_/api/list' => sub {
     }
 };
 
+post '/_/api/cleanup' => sub {
+    my $c = shift;
+    $c->render(json => {});
+    cleanup_fs();
+};
+
 sub send_status {
     @listening = grep { $_->tx } @listening;
     my $status = encode_json generate_status_json();
@@ -86,8 +94,9 @@ sub generate_status_json {
                 push @to_scan, "$file/$_";
             }
             closedir $dh;
-        } elsif (-f $file) {
-            my $path = substr $file, 1 + length $cloud_storage_path ;
+        } elsif (-f $file and $file =~ m{\.txt$}) {
+            my $path = substr $file, 1 + length $cloud_storage_path;
+            $path =~ s{\.txt}{};
             my @stat = stat $file;
             push @{$data->{files}}, {
                 name => $path,
@@ -109,15 +118,33 @@ get '/*' => sub {
         $c->render_later;
     } else {
         # client did not ask for streaming updates
-        $c->reply->asset(Mojo::Asset::File->new(path => $cloud_storage_path . $c->req->url->path));
+        app->log->info("PUT $c->req->url->path");
+        my $path = real_path($c->req->url->path);
+        if (-f $path and -r $path) {
+            $c->reply->asset(Mojo::Asset::File->new(path => $path));
+        } else {
+            $c->reply->not_found;
+        }
+    }
+};
+
+del '/*' => sub {
+    my $c = shift;
+    app->log->info("DELETE $c->req->url->path");
+    my $path = real_path($c->req->url->path);
+    if (-f $path) {
+        unlink $path;
+        cleanup_fs();
     }
 };
 
 sub put_open {
     my ($path) = @_;
+    app->log->info("PUT $path");
     app->log->debug("$path -> BEGIN RECEIVING");
-    unlink "$cloud_storage_path$path" if -e "$cloud_storage_path$path";
-    my $file = $writing{$path} = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
+    unlink real_path($path) if -e real_path($path);
+    create_dirs($path);
+    my $file = $writing{$path} = Mojo::Asset::File->new(path => real_path($path), cleanup => 0);
     open $file->{handle}, '>', $file->path; # hack to force read-write open and trunc
     $_->() for @{$reading{$path} || []};
     send_status();
@@ -142,11 +169,14 @@ sub get_send {
     my ($path, $controller) = @_;
 
     my $pos = 0;
+    app->log->info("GET $path");
     app->log->debug("$path -> BEGIN SENDING");
+
+    create_dirs($path);
 
     my $cb;
     $cb = sub {
-        my $file = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
+        my $file = Mojo::Asset::File->new(path => real_path($path), cleanup => 0);
 
         # must have been truncated; return to beginning
         $pos = 0 if $pos > $file->size;
@@ -186,7 +216,7 @@ sub get_send {
 
     # call the callback to get things started
     # unless the file doesn't exist yet... we'll do nothing now and wait
-    my $file = Mojo::Asset::File->new(path => "$cloud_storage_path$path", cleanup => 0);
+    my $file = Mojo::Asset::File->new(path => real_path($path), cleanup => 0);
     if ($file->size > 0) {
         $cb->();
     } else {
@@ -203,5 +233,51 @@ sub get_close {
     delete $reading{$path} if @{$reading{$path}} == 0;
     send_status();
 }
+
+sub real_path {
+    my ($path) = @_;
+    $path =~ s{^/+|/+$}{}g;
+    $path =~ s{/+}{/}g;
+    return "$cloud_storage_path/$path.txt";
+}
+
+sub create_dirs {
+    my ($path) = shift;
+    my $real_path = real_path($path);
+    $real_path =~ s{/[^/]+$}{};
+    make_path $real_path unless -d $real_path;
+}
+
+sub cleanup_fs {
+    my @to_scan = $cloud_storage_path;
+    while (my $file = pop @to_scan) {
+        if (-d $file) {
+            my $dh;
+            my $c = 0;
+            opendir $dh, $file;
+            for (reverse readdir $dh) {
+                next if $_ eq '.' or $_ eq '..';
+                $c++;
+                push @to_scan, "$file/$_";
+            }
+            closedir $dh;
+            if ($c == 0) {
+                rmdir $file;
+                my $short = substr $file, 1 + length $cloud_storage_path;
+                app->log->info("CLEANUP $short (empty)");
+            }
+        } elsif (-f $file and $file =~ m{\.txt$}) {
+            my @stat = stat $file;
+            if (time - $stat[9] > $expiration_seconds) {
+                my $short = substr $file, 1 + length $cloud_storage_path;
+                $short =~ s{\.txt}{};
+                app->log->info("CLEANUP $short (old)");
+                unlink $file;
+            }
+        }
+    }
+}
+
+Mojo::IOLoop->recurring(900 => \&cleanup_fs);
 
 app->start;
