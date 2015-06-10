@@ -29,7 +29,7 @@ hook after_build_tx => sub {
     $tx->req->content->on(
         body => sub {
             my ($content) = @_;
-            put_open($tx->req->url->path) if $tx->req->method eq 'PUT';
+            put_open($tx->req->url->path, $tx->req) if $tx->req->method eq 'PUT';
         }
     );
 
@@ -146,13 +146,22 @@ del '/*' => sub {
 };
 
 sub put_open {
-    my ($path) = @_;
+    my ($path, $req) = @_;
     app->log->info("PUT $path");
     app->log->debug("$path -> BEGIN RECEIVING");
     unlink real_path($path) if -e real_path($path);
     create_dirs($path);
-    my $file = $writing{$path} = Mojo::Asset::File->new(path => real_path($path), cleanup => 0);
-    open $file->{handle}, '>', $file->path; # hack to force read-write open and trunc
+    if ($writing{$path}) {
+        $writing{$path}{count}++;
+    } else {
+        $writing{$path} = {
+            asset => Mojo::Asset::File->new(path => real_path($path), cleanup => 0),
+            count => 1,
+        };
+    }
+    my $args = parse_args($req);
+    my $file = $writing{$path}{asset};
+    open $file->{handle}, ($args->{append} ? '>>' : '>'), $file->path; # hack to force read-write open and trunc
     $_->() for @{$reading{$path} || []};
     send_status();
 }
@@ -160,14 +169,15 @@ sub put_open {
 sub put_recv {
     my ($path, $data) = @_;
     app->log->debug(sprintf "%s -> RECEIVED %d bytes", $path, length $data);
-    $writing{$path}->add_chunk($data);
+    $writing{$path}{asset}->add_chunk($data);
     $_->() for @{$reading{$path} || []};
 }
 
 sub put_close {
     my ($path) = @_;
     app->log->debug("$path -> FINISHED RECEIVING");
-    delete $writing{$path};
+    $writing{$path}{count}--;
+    delete $writing{$path} if $writing{$path}{count} == 0;
     $_->() for @{$reading{$path} || []};
     send_status();
 }
@@ -288,6 +298,14 @@ sub cleanup_fs {
 sub guess_type {
     my $file = shift;
     return magic($file) || (-T $file && 'text/plain') || 'application/octet-stream';
+}
+
+sub parse_args {
+    my ($req) = @_;
+    my $p = {};
+    my $q = $req->query_params;
+    $p->{append} = 1 if $q->param('append');
+    return $p;
 }
 
 Mojo::IOLoop->recurring(900 => \&cleanup_fs);
