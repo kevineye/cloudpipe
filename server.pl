@@ -22,37 +22,6 @@ my %writing;
 my %reading;
 my @listening;
 
-hook after_build_tx => sub {
-    my $tx = shift;
-    weaken $tx;
-  
-    $tx->req->content->on(
-        body => sub {
-            my ($content) = @_;
-            put_open($tx->req->url->path, $tx->req) if $tx->req->method eq 'PUT';
-        }
-    );
-
-    $tx->req->content->on(
-        read => sub {
-            my ($content, $bytes) = @_;
-            put_recv($tx->req->url->path, $bytes) if $tx->req->method eq 'PUT';
-        }
-    );
-
-    $tx->on(
-        finish => sub {
-            put_close($tx->req->url->path) if $tx->req->method eq 'PUT';
-        }
-    );
-};
-
-put '*' => sub {
-    my $c  = shift;
-    put_close($c->req->url->path);
-    $c->render(data => '');
-};
-
 #get '/' => sub {
 #    my $c = shift;
 #    $c->render(text => "...");
@@ -96,13 +65,13 @@ sub generate_status_json {
             }
             closedir $dh;
         } elsif (-f $file and $file =~ m{\.txt$}) {
-            my $path = substr $file, 1 + length $cloud_storage_path;
-            $path =~ s{\.txt}{};
+            my $name = substr $file, 1 + length $cloud_storage_path;
+            $name =~ s{\.txt}{};
             my @stat = stat $file;
             push @{$data->{files}}, {
-                name => $path,
-                sending => ($reading{$path} ? Mojo::JSON->true : Mojo::JSON->false),
-                receiving => ($writing{$path} ? Mojo::JSON->true : Mojo::JSON->false),
+                name => $name,
+                sending => ($reading{$name} ? Mojo::JSON->true : Mojo::JSON->false),
+                receiving => ($writing{$name} ? Mojo::JSON->true : Mojo::JSON->false),
                 size => $stat[7],
                 mtime => $stat[9],
             };
@@ -113,135 +82,94 @@ sub generate_status_json {
 
 get '/*' => sub {
     my $c = shift;
-    my $path = real_path($c->req->url->path);
+    my ($name, $file, $args) = parse_req($c->req);
     if ($c->req->headers->te && $c->req->headers->te =~ /\bchunked\b/) {
         # client wants streaming updates
-        $c->res->headers->content_type(guess_type($path));
-        get_send($c->req->url->path, $c);
+        $c->res->headers->content_type(guess_type($file));
+
+        app->log->info("GET $name");
+        app->log->debug("$name -> BEGIN SENDING");
+
+        create_dirs($file);
+
+        my $size = -s $file;
+        my $pos = exists $args->{last} ? ($args->{last} > $size ? $size : $size - $args->{last}) : 0;
+
+        my $cb;
+        $cb = sub {
+            my $asset= Mojo::Asset::File->new(path => $file, cleanup => 0);
+
+            # must have been truncated; return to beginning
+            $pos = 0 if $pos > $asset->size;
+
+            # we've sent the whole file
+            if ($pos == $asset->size) {
+
+                # if the file is not still being written, close it
+                unless ($writing{$name}) {
+                    get_close($name, $cb);
+                    $c->finish;
+                } else {
+                    app->log->debug("$name -> FINISHED SENDING, WAITING");
+                }
+
+                # if it is still being written, our cb will be activated later by the writer
+            } else {
+                # send the next chunk, and then call the callback again
+                my $data = $asset->get_chunk($pos);
+                $pos += length $data;
+                app->log->debug(sprintf "%s -> SEND %d bytes", $name, length $data);
+                $c->write_chunk($data, $cb);
+            }
+
+        };
+
+        # setup cleanup
+        $c->on(
+            finish => sub {
+                get_close($name, $cb);
+            }
+        );
+
+        # open the file by listing it in the readers for this path
+        $reading{$name} ||= [];
+        push @{$reading{$name}}, $cb;
+
+        # call the callback to get things started
+        # unless the file doesn't exist yet... we'll do nothing now and wait
+        my $asset = Mojo::Asset::File->new(path => $file, cleanup => 0);
+        if ($asset->size > 0 && $pos < $asset->size) {
+            $cb->();
+        } else {
+            app->log->debug("$name -> WAITING FOR INITIAL DATA");
+        }
+
+        send_status();
         $c->render_later;
     } else {
         # client did not ask for streaming updates
-        app->log->info("PUT ".$c->req->url->path);
-        if (-f $path and -r $path) {
-            $c->res->headers->content_type(guess_type($path));
-            $c->res->content->asset(Mojo::Asset::File->new(path => $path));
-            $c->rendered(200);
+        app->log->info("GET $name");
+        if (-f $file and -r $file) {
+            $c->res->headers->content_type(guess_type($file));
+            my $asset = Mojo::Asset::File->new(path => $file, cleanup => 0);
+            my $size = $asset->size;
+            if (exists $args->{last}) {
+                $asset->end_range($size);
+                $size = $args->{last} unless $args->{last} > $size;
+                $asset->start_range($asset->end_range - $size);
+                $c->res->headers->content_length($size);
+            }
+            if ($size == 0) {
+                $c->render(data => '');
+            } else {
+                $c->res->content->asset($asset);
+                $c->rendered(200);
+            }
         } else {
             $c->reply->not_found;
         }
     }
 };
-
-del '/*' => sub {
-    my $c = shift;
-    app->log->info("DELETE ".$c->req->url->path);
-    my $path = real_path($c->req->url->path);
-    if (-f $path) {
-        unlink $path;
-        cleanup_fs();
-    }
-    delete $reading{$c->req->url->path};
-    delete $writing{$c->req->url->path};
-    $c->render(json => {});
-};
-
-sub put_open {
-    my ($path, $req) = @_;
-    app->log->info("PUT $path");
-    app->log->debug("$path -> BEGIN RECEIVING");
-    unlink real_path($path) if -e real_path($path);
-    create_dirs($path);
-    if ($writing{$path}) {
-        $writing{$path}{count}++;
-    } else {
-        $writing{$path} = {
-            asset => Mojo::Asset::File->new(path => real_path($path), cleanup => 0),
-            count => 1,
-        };
-    }
-    my $args = parse_args($req);
-    my $file = $writing{$path}{asset};
-    open $file->{handle}, ($args->{append} ? '>>' : '>'), $file->path; # hack to force read-write open and trunc
-    $_->() for @{$reading{$path} || []};
-    send_status();
-}
-
-sub put_recv {
-    my ($path, $data) = @_;
-    app->log->debug(sprintf "%s -> RECEIVED %d bytes", $path, length $data);
-    $writing{$path}{asset}->add_chunk($data);
-    $_->() for @{$reading{$path} || []};
-}
-
-sub put_close {
-    my ($path) = @_;
-    app->log->debug("$path -> FINISHED RECEIVING");
-    $writing{$path}{count}--;
-    delete $writing{$path} if $writing{$path}{count} == 0;
-    $_->() for @{$reading{$path} || []};
-    send_status();
-}
-
-sub get_send {
-    my ($path, $controller) = @_;
-
-    my $pos = 0;
-    app->log->info("GET $path");
-    app->log->debug("$path -> BEGIN SENDING");
-
-    create_dirs($path);
-
-    my $cb;
-    $cb = sub {
-        my $file = Mojo::Asset::File->new(path => real_path($path), cleanup => 0);
-
-        # must have been truncated; return to beginning
-        $pos = 0 if $pos > $file->size;
-
-        # we've sent the whole file
-        if ($pos == $file->size) {
-
-            # if the file is not still being written, close it
-            unless ($writing{$path}) {
-                get_close($path, $cb);
-                $controller->finish;
-            } else {
-                app->log->debug("$path -> FINISHED SENDING, WAITING");
-            }
-
-            # if it is still being written, our cb will be activated later by the writer
-        } else {
-            # send the next chunk, and then call the callback again
-            my $data = $file->get_chunk($pos);
-            $pos += length $data;
-            app->log->debug(sprintf "%s -> SEND %d bytes", $path, length $data);
-            $controller->write_chunk($data, $cb);
-        }
-
-    };
-
-    # setup cleanup
-    $controller->on(
-        finish => sub {
-            get_close($path, $cb);
-        }
-    );
-
-    # open the file by listing it in the readers for this path
-    $reading{$path} ||= [];
-    push @{$reading{$path}}, $cb;
-
-    # call the callback to get things started
-    # unless the file doesn't exist yet... we'll do nothing now and wait
-    my $file = Mojo::Asset::File->new(path => real_path($path), cleanup => 0);
-    if ($file->size > 0) {
-        $cb->();
-    } else {
-        app->log->debug("$path -> WAITING FOR INITIAL DATA");
-    }
-
-    send_status();
-}
 
 sub get_close {
     my ($path, $cb) = @_;
@@ -251,18 +179,94 @@ sub get_close {
     send_status();
 }
 
-sub real_path {
-    my ($path) = @_;
-    $path =~ s{^/+|/+$}{}g;
-    $path =~ s{/+}{/}g;
-    return "$cloud_storage_path/$path.txt";
+del '/*' => sub {
+    my $c = shift;
+    my ($name, $file, $args) = parse_req($c->req);
+    app->log->info("DELETE $name");
+    if (-f $file) {
+        unlink $file;
+        cleanup_fs();
+    }
+    delete $reading{$name};
+    delete $writing{$name};
+    $c->render(json => {});
+};
+
+hook after_build_tx => sub {
+    my $tx = shift;
+    weaken $tx;
+
+    $tx->req->content->on(
+        body => sub {
+            my ($content) = @_;
+            put_open($tx->req) if $tx->req->method eq 'PUT';
+        }
+    );
+
+    $tx->req->content->on(
+        read => sub {
+            my ($content, $bytes) = @_;
+            put_recv($tx->req, $bytes) if $tx->req->method eq 'PUT';
+        }
+    );
+
+    $tx->on(
+        finish => sub {
+            put_close($tx->req) if $tx->req->method eq 'PUT';
+        }
+    );
+};
+
+put '*' => sub {
+    my $c  = shift;
+    $c->render(data => '');
+};
+
+sub put_open {
+    my ($req) = @_;
+    my ($name, $file, $args) = parse_req($req);
+    app->log->info("PUT name");
+    app->log->debug("name -> BEGIN RECEIVING");
+    unlink $file if -e $file and not $args->{append};
+    create_dirs($file);
+    if ($writing{$name}) {
+        $writing{$name}{count}++;
+    } else {
+        $writing{$name} = {
+            asset => Mojo::Asset::File->new(path => $file, cleanup => 0),
+            count => 1,
+        };
+    }
+    my $asset = $writing{$name}{asset};
+    open $asset->{handle}, ($args->{append} ? '>>' : '>'), $asset->path; # hack to force read-write open and trunc/append
+    $_->() for @{$reading{$name} || []};
+    send_status();
+}
+
+sub put_recv {
+    my ($req, $data) = @_;
+    my ($name, $file, $args) = parse_req($req);
+    app->log->debug(sprintf "%s -> RECEIVED %d bytes", $name, length $data);
+    $writing{$name}{asset}->add_chunk($data);
+    $_->() for @{$reading{$name} || []};
+}
+
+sub put_close {
+    my ($req) = @_;
+    my ($name, $file, $args) = parse_req($req);
+    app->log->debug("$name -> FINISHED RECEIVING");
+    if ($writing{$name}) {
+        $writing{$name}{count}--;
+        delete $writing{$name} if $writing{$name}{count} <= 0;
+    }
+    $_->() for @{$reading{$name} || []};
+    send_status();
 }
 
 sub create_dirs {
-    my ($path) = shift;
-    my $real_path = real_path($path);
-    $real_path =~ s{/[^/]+$}{};
-    make_path $real_path unless -d $real_path;
+    my ($file) = @_;
+    $file =~ s{/[^/]+$}{};
+    make_path $file unless -d $file;
 }
 
 sub cleanup_fs {
@@ -278,17 +282,17 @@ sub cleanup_fs {
                 push @to_scan, "$file/$_";
             }
             closedir $dh;
-            if ($c == 0) {
+            if ($c == 0 and $file ne $cloud_storage_path) {
                 rmdir $file;
-                my $short = substr $file, 1 + length $cloud_storage_path;
-                app->log->info("CLEANUP $short (empty)");
+                my $name = substr $file, length $cloud_storage_path;
+                app->log->info("CLEANUP $name (empty)");
             }
         } elsif (-f $file and $file =~ m{\.txt$}) {
             my @stat = stat $file;
             if (time - $stat[9] > $expiration_seconds) {
-                my $short = substr $file, 1 + length $cloud_storage_path;
-                $short =~ s{\.txt}{};
-                app->log->info("CLEANUP $short (old)");
+                my $name = substr $file, 1 + length $cloud_storage_path;
+                $name =~ s{\.txt}{};
+                app->log->info("CLEANUP $name (old)");
                 unlink $file;
             }
         }
@@ -300,12 +304,50 @@ sub guess_type {
     return magic($file) || (-T $file && 'text/plain') || 'application/octet-stream';
 }
 
-sub parse_args {
+sub parse_req {
     my ($req) = @_;
-    my $p = {};
+    my $args = {};
+    my $path = $req->url->path;
+
+    # parse query params
     my $q = $req->query_params;
-    $p->{append} = 1 if $q->param('append');
-    return $p;
+    $args->{append} = 1 if $q->param('append');
+    $args->{last} = $q->param('last') if defined $q->param('last');
+    $args->{last} = 0 if $q->param('end');
+
+#    # parse "command line" options
+#    my @argv = split /\s+/, $path;
+#    my @names;
+#
+#    while (@argv) {
+#        my $a = shift @argv;
+#        if ($a =~ m{^-}) {
+#            if ($a eq '-e' or $a eq '--end') {
+#                $args->{last} = 0;
+#            } elsif ($a eq '-a' or $a eq '--append') {
+#                $args->{append} = 1;
+#            } elsif ($a eq '-l' or $a eq '--last') {
+#                $args->{last} = shift @argv;
+#            }
+#        } else {
+#            push @names, $a;
+#        }
+#    }
+
+    # extract and normalize "name" (URL path)
+#    my $name = $names[0] || 'default';
+    my $name = $path;
+    $name =~ s{^/+|/+$}{}g;
+    $name =~ s{[^0-9a-zA-Z_./]+}{-}g;
+    $name =~ s{^-+|-+$}{}g;
+    $name =~ s{/+}{/}g;
+
+    # transform name to "file" (storage path)
+    my $file = "$cloud_storage_path/$name.txt";
+
+#    warn encode_json [($name, $file, $args)];
+
+    return ($name, $file, $args);
 }
 
 Mojo::IOLoop->recurring(900 => \&cleanup_fs);

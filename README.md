@@ -34,6 +34,8 @@
    - Use `?append=1` to append to the stream if it already exists
  - `GET /*` download a file
    - With `TE: chunked` header, the connection will be held open, streaming data as long as a writer is writing.
+   - Use `?last=N` to start N bytes from the current end of the stream
+   - Use `?end=1` to start at the current end of the stream
  - `DELETE /*` delete a file
  - `GET /_/api/list` return JSON describing all streams available to read
    - With `TE: chunked` header, the connection will be held open, sending new JSON messages for each status change.
