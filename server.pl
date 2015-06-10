@@ -7,6 +7,7 @@ BEGIN {
 use Mojolicious::Lite;
 use autodie;
 use File::Path 'make_path';
+use File::MimeInfo::Magic 'magic';
 use Mojo::JSON 'encode_json';
 use Scalar::Util 'weaken';
 
@@ -72,8 +73,8 @@ get '/_/api/list' => sub {
 
 post '/_/api/cleanup' => sub {
     my $c = shift;
-    $c->render(json => {});
     cleanup_fs();
+    $c->render(json => {});
 };
 
 sub send_status {
@@ -112,16 +113,19 @@ sub generate_status_json {
 
 get '/*' => sub {
     my $c = shift;
+    my $path = real_path($c->req->url->path);
     if ($c->req->headers->te && $c->req->headers->te =~ /\bchunked\b/) {
         # client wants streaming updates
+        $c->res->headers->content_type(guess_type($path));
         get_send($c->req->url->path, $c);
         $c->render_later;
     } else {
         # client did not ask for streaming updates
-        app->log->info("PUT $c->req->url->path");
-        my $path = real_path($c->req->url->path);
+        app->log->info("PUT ".$c->req->url->path);
         if (-f $path and -r $path) {
-            $c->reply->asset(Mojo::Asset::File->new(path => $path));
+            $c->res->headers->content_type(guess_type($path));
+            $c->res->content->asset(Mojo::Asset::File->new(path => $path));
+            $c->rendered(200);
         } else {
             $c->reply->not_found;
         }
@@ -130,12 +134,15 @@ get '/*' => sub {
 
 del '/*' => sub {
     my $c = shift;
-    app->log->info("DELETE $c->req->url->path");
+    app->log->info("DELETE ".$c->req->url->path);
     my $path = real_path($c->req->url->path);
     if (-f $path) {
         unlink $path;
         cleanup_fs();
     }
+    delete $reading{$c->req->url->path};
+    delete $writing{$c->req->url->path};
+    $c->render(json => {});
 };
 
 sub put_open {
@@ -276,6 +283,11 @@ sub cleanup_fs {
             }
         }
     }
+}
+
+sub guess_type {
+    my $file = shift;
+    return magic($file) || (-T $file && 'text/plain') || 'application/octet-stream';
 }
 
 Mojo::IOLoop->recurring(900 => \&cleanup_fs);
