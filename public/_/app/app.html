@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>cloudpipe</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootswatch/3.3.4/lumen/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootswatch/3.3.4/united/bootstrap.min.css" rel="stylesheet">
     <link href="/_/app/app.css" rel="stylesheet">
 </head>
 
@@ -22,7 +22,7 @@
 
 <div class="container top-container" data-ng-controller="ListCtrl">
 
-    <div class="alert alert-info alert-dismissible alert-lite-client" role="alert">
+    <div class="alert alert-warning alert-dismissible alert-lite-client" role="alert">
         <button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>
         <p>Copy the lite client code into any shell to read and write this server:</p>
         <div class="input-group input-group-sm">
@@ -35,24 +35,9 @@
         <tbody>
         <tr data-ng-repeat="file in list.files">
             <td><a href="/{{ file.name }}">{{ file.name }}</a></td>
-            <td><span data-ng-show="file.reading || file.writing" class="glyphicon glyphicon-refresh glyphicon-spin"></span><span data-ng-hide="file.reading || file.writing"><span class="glyphicon glyphicon-time"></span> {{ formatDateDiff(file.mtime) }}</span></td>
+            <td><span data-ng-show="file.sending || file.receiving" class="glyphicon glyphicon-refresh glyphicon-spin"></span><span data-ng-hide="file.sending || file.receiving"><span class="glyphicon glyphicon-time"></span> {{ formatDateDiff(file.mtime) }}</span></td>
             <td>{{ formatSize(file.size) }}</td>
         </tr>
-        <!--<tr>-->
-            <!--<td><a href="#">foo / bar</a></td>-->
-            <!--<td><span class="glyphicon glyphicon-time"></span> 5 m</td>-->
-            <!--<td>1 KB</td>-->
-        <!--</tr>-->
-        <!--<tr>-->
-            <!--<td><a href="#">bar</a></td>-->
-            <!--<td><span class="glyphicon glyphicon-time"></span> 5 m</td>-->
-            <!--<td>1 KB</td>-->
-        <!--</tr>-->
-        <!--<tr>-->
-            <!--<td><a href="#">baz</a></td>-->
-            <!--<td><span class="glyphicon glyphicon-time"></span> 5 m</td>-->
-            <!--<td>1 KB</td>-->
-        <!--</tr>-->
         </tbody>
     </table>
 

@@ -17,6 +17,7 @@ app.controller('ListCtrl', [ '$scope', 'status', function ($scope, status) {
     $scope.clientUrl = location.protocol + '//' + location.host;
 
     $scope.list = status.query();
+    window.setInterval(function() { $scope.list = status.query(); }, 30000);
 
     $scope.formatDateDiff = function(secs) {
         var diff = (new Date()).getTime() / 1000 - secs;
@@ -48,7 +49,9 @@ app.controller('ListCtrl', [ '$scope', 'status', function ($scope, status) {
     };
 
     $scope.copiedClientCode = function() {
-        alert('Copied. Now find a shell!');
+        var $p = $('.alert-lite-client .input-group-addon').popover({ container: 'body', content: 'Copied', placement: 'top'});
+        $p.popover('show');
+        window.setTimeout(function() { $p.popover('hide'); }, 1500);
     };
 
 }]);
