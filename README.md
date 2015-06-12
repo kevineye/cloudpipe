@@ -27,6 +27,7 @@
  - Reading will start from the beginning of the file and will continue to stream until all writers disconnect.
  - Multiple clients can read and write at the same time.
  - Files are stored and can be re-streamed.
+ - Web interface (http://localhost:9729)
 
 ### REST API
 

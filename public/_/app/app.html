@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>cloudpipe</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootswatch/3.3.4/lumen/bootstrap.min.css" rel="stylesheet">
+    <link href="/_/app/app.css" rel="stylesheet">
+</head>
+
+<body data-ng-app="cloudpipe">
+
+<nav class="navbar navbar-inverse navbar-fixed-top">
+    <div class="container">
+        <div class="navbar-header">
+            <a class="navbar-brand" href="#"><span class="glyphicon glyphicon-cloud"></span> <span class="name">cloudpipe</span></a>
+        </div>
+    </div>
+</nav>
+
+<div class="container top-container" data-ng-controller="ListCtrl">
+
+    <div class="alert alert-info alert-dismissible alert-lite-client" role="alert">
+        <button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <p>Copy the lite client code into any shell to read and write this server:</p>
+        <div class="input-group input-group-sm">
+            <input type="text" class="form-control" id="lite-client" value="{{ getClientCode() }}">
+            <span class="input-group-addon" clip-copy="getClientCode()" clip-click="copiedClientCode()"><span class="glyphicon glyphicon-copy"></span></span>
+        </div>
+    </div>
+
+    <table class="table table-striped table-hover table-stream-list">
+        <tbody>
+        <tr data-ng-repeat="file in list.files">
+            <td><a href="/{{ file.name }}">{{ file.name }}</a></td>
+            <td><span data-ng-show="file.reading || file.writing" class="glyphicon glyphicon-refresh glyphicon-spin"></span><span data-ng-hide="file.reading || file.writing"><span class="glyphicon glyphicon-time"></span> {{ formatDateDiff(file.mtime) }}</span></td>
+            <td>{{ formatSize(file.size) }}</td>
+        </tr>
+        <!--<tr>-->
+            <!--<td><a href="#">foo / bar</a></td>-->
+            <!--<td><span class="glyphicon glyphicon-time"></span> 5 m</td>-->
+            <!--<td>1 KB</td>-->
+        <!--</tr>-->
+        <!--<tr>-->
+            <!--<td><a href="#">bar</a></td>-->
+            <!--<td><span class="glyphicon glyphicon-time"></span> 5 m</td>-->
+            <!--<td>1 KB</td>-->
+        <!--</tr>-->
+        <!--<tr>-->
+            <!--<td><a href="#">baz</a></td>-->
+            <!--<td><span class="glyphicon glyphicon-time"></span> 5 m</td>-->
+            <!--<td>1 KB</td>-->
+        <!--</tr>-->
+        </tbody>
+    </table>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.4/js/bootstrap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.3.16/angular.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.3.16/angular-resource.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ng-clip/0.2.6/ng-clip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/zeroclipboard/2.2.0/ZeroClipboard.min.js"></script>
+<script src="/_/app/app.js"></script>
+
+</body>
+</html>

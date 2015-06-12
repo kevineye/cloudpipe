@@ -1,0 +1,54 @@
+.top-container {
+    margin-top: 80px;
+}
+
+.navbar-brand .name {
+    vertical-align: 4px;
+    margin-left: 5px;
+}
+
+.alert-lite-client p {
+    margin-bottom: 8px;
+}
+
+.alert-lite-client input {
+    font-family: monospace;
+    color: #999;
+}
+
+.table-stream-list tr td:nth-child(2) .glyphicon {
+    color: #999;
+    font-size: 80%;
+}
+
+.table-stream-list tr td:nth-child(2),
+.table-stream-list tr td:nth-child(3) {
+    width: 6em;
+}
+
+.glyphicon-spin {
+    -webkit-animation: spin 1000ms infinite linear;
+    animation: spin 1000ms infinite linear;
+}
+
+@-webkit-keyframes spin {
+    0% {
+        -webkit-transform: rotate(0deg);
+        transform: rotate(0deg);
+    }
+    100% {
+        -webkit-transform: rotate(359deg);
+        transform: rotate(359deg);
+    }
+}
+
+@keyframes spin {
+    0% {
+        -webkit-transform: rotate(0deg);
+        transform: rotate(0deg);
+    }
+    100% {
+        -webkit-transform: rotate(359deg);
+        transform: rotate(359deg);
+    }
+}

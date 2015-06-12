@@ -22,10 +22,10 @@ my %writing;
 my %reading;
 my @listening;
 
-#get '/' => sub {
-#    my $c = shift;
-#    $c->render(text => "...");
-#};
+get '/' => sub {
+    my $c = shift;
+    $c->reply->static('_/app/app.html');
+};
 
 get '/_/api/list' => sub {
     my $c = shift;
@@ -59,7 +59,7 @@ sub generate_status_json {
         if (-d $file) {
             my $dh;
             opendir $dh, $file;
-            for (reverse readdir $dh) {
+            for (reverse sort readdir $dh) {
                 next if $_ eq '.' or $_ eq '..';
                 push @to_scan, "$file/$_";
             }
